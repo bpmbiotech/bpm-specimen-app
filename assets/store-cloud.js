@@ -44,8 +44,13 @@
       maxDrawer[cabCode] = Math.max(maxDrawer[cabCode] || 0, d);
     });
     order.forEach((c) => {
-      const g = grid[c] || [2, 5, 5, 4];
-      grid[c] = [g[0], maxDrawer[c] || g[1], maxTier[c] || 5, maxSeq[c] || 4];
+      const info = cab[c] || { layers: 2, drawers: [5, 5] };
+      grid[c] = [
+        info.layers,
+        Math.max.apply(null, info.drawers),
+        maxTier[c] || 5,
+        maxSeq[c] || 4,
+      ];
     });
 
     // 區域格（kind 3）
