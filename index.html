@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>BPM 檢體管理系統</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">BPM檢體管理系統<span class="badge">原型 · 本機資料</span></div>
+  <nav class="tabs" id="tabs">
+    <a href="#map" data-v="map">冰箱地圖</a>
+    <a href="#dist" data-v="dist" title="各 Study 在各冰箱的檢體數">檢體分布</a>
+    <a href="#lists" data-v="lists">清單工作台</a>
+    <a href="#import" data-v="import">匯入精靈</a>
+    <a href="#ledger" data-v="ledger">交易紀錄</a>
+    <span class="navsep" aria-hidden="true"></span>
+    <a href="#recommend" data-v="recommend" class="tool" title="規劃工具：只產生清單，不會寫入資料">推薦選位</a>
+    <a href="#merge" data-v="merge" class="tool" title="規劃工具：只產生清單，不會寫入資料">整併規劃</a>
+  </nav>
+  <div class="role">角色
+    <select id="role">
+      <option value="operator">operator</option>
+      <option value="admin">admin</option>
+    </select>
+  </div>
+</header>
+<main id="view"></main>
+
+<!-- 選出領取（二階段確認） -->
+<div class="modal" id="outmodal">
+  <div class="panel" id="outpanel"></div>
+</div>
+
+<!-- 匯入確認（新增檢體二階段） -->
+<div class="modal" id="confmodal">
+  <div class="panel" id="confpanel"></div>
+</div>
+
+<!-- 盒子明細 -->
+<div class="modal" id="modal">
+  <div class="panel">
+    <button class="close" onclick="App.closeModal()">關閉</button>
+    <h3 id="mt"></h3>
+    <div class="sub" id="ms"></div>
+    <div class="boxes" id="mb"></div>
+  </div>
+</div>
+
+<script src="assets/cloud.config.js"></script>
+<script src="assets/cloud.js"></script>
+<script src="assets/boot.js"></script>
+</body>
+</html>
