@@ -37,7 +37,7 @@
   /* ---------------- 路由 ---------------- */
   function route() {
     const v = (location.hash || "#map").slice(1);
-    view = ["map", "lists", "merge", "import", "recommend", "ledger", "dist"].includes(v) ? v : "map";
+    view = ["map", "lists", "merge", "import", "recommend", "ledger", "dist", "users"].includes(v) ? v : "map";
     document.querySelectorAll("#tabs a").forEach(a => a.classList.toggle("on", a.dataset.v === view));
     render();
   }
@@ -46,12 +46,15 @@
   function render() {
     const main = document.querySelector("main");
     if (main) main.classList.toggle("wide", view === "merge" || view === "recommend");
+    const navUsers = document.querySelector('a[data-v="users"]');
+    if (navUsers) navUsers.style.display = St.role === "admin" ? "" : "none";
     if (view === "map") renderMap();
     else if (view === "lists") renderLists();
     else if (view === "import") renderImport();
     else if (view === "recommend") renderRecommend();
     else if (view === "merge") renderMerge();
     else if (view === "dist") renderStudyDist();
+    else if (view === "users") renderUsers();
     else renderLedger();
   }
 
@@ -1614,6 +1617,51 @@
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 3000);
   }
 
+  /* ---------------- 使用者與角色（admin） ---------------- */
+  function renderUsers() {
+    $("#view").innerHTML = `<h1 class="page">使用者與角色</h1>
+      <div class="card" id="userbox"><div class="muted" style="padding:16px">載入中…</div></div>`;
+    if (!St.cloud) {
+      $("#userbox").innerHTML = `<div class="muted" style="padding:16px">離線模式沒有使用者管理；請以雲端帳號登入。</div>`;
+      return;
+    }
+    if (St.role !== "admin") {
+      $("#userbox").innerHTML = `<div class="muted" style="padding:16px">僅 admin 可檢視使用者。</div>`;
+      return;
+    }
+    St.listUsers().then((rows) => {
+      const roles = ["admin", "operator", "ai_readonly"];
+      const body = rows.map((u) => `<tr>
+        <td>${esc(u.email || "—")}</td>
+        <td>${esc(u.display_name || "—")}</td>
+        <td><select onchange="App.userRole('${u.id}', this.value)">
+          ${roles.map((r) => `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`).join("")}
+        </select></td>
+        <td>${u.active ? '<span class="tag ok">啟用</span>' : '<span class="tag err">停用</span>'}</td>
+        <td>${fmt(u.created_at)}</td>
+      </tr>`).join("");
+      $("#userbox").innerHTML = `
+        <div class="muted" style="margin-bottom:10px">共 ${rows.length} 位。admin＝全部；operator＝日常操作（不能新增檢體）；ai_readonly＝只能讀。</div>
+        <div class="scroll"><table class="tb"><thead><tr>
+          <th>Email</th><th>名稱</th><th>角色</th><th>狀態</th><th>建立時間</th>
+        </tr></thead><tbody>${body}</tbody></table></div>
+        <div class="muted" style="margin-top:10px">新增帳號請用 <code>tools/supabase/bootstrap.mjs</code>（或告知管理者）。</div>`;
+    }).catch((e) => {
+      $("#userbox").innerHTML = `<div class="muted" style="padding:16px">載入失敗：${esc(e.message)}</div>`;
+    });
+  }
+
+  async function userRole(id, role) {
+    if (!confirm(`確定把這位使用者的角色改為「${role}」？`)) { renderUsers(); return; }
+    try {
+      await St.setUserRole(id, role);
+      alert("角色已更新");
+    } catch (e) {
+      alert("更新失敗：" + e.message);
+    }
+    renderUsers();
+  }
+
   /* ---------------- 交易紀錄 ---------------- */
   function renderLedger() {
     const mv = St.movements;
@@ -1895,6 +1943,7 @@
     newList, delList, markMissing, exportList, toggleAll, swapTube,
     checkout: openCheckout, pick: openCheckout,
     ckField, ckAck, ckStep, ckConfirm, ckClose, ckSaveXlsx,
+    userRole,
     setImpType, onFile, template, loadSample, setAck, doImport, exportLedger, exportConflicts,
     sfSet, sfExport, gotoStudy, pickInvalidate,
     mgSet, mgPlan, mgExport,

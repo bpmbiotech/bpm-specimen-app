@@ -304,6 +304,8 @@
       get movements() { return movements; },
       createList, getList, deleteList, addItems,
       drawOut, markMissing, importRows,
+      listUsers: () => C.rpc("fn_list_users"),
+      setUserRole: (id, role) => C.rpc("fn_set_user_role", { p_id: id, p_role: role }),
       addExtra() { throw new Error("雲端模式不支援直接新增位置"); },
       addMovement() { /* 由 RPC 寫入 */ },
       nextNo() { throw new Error("雲端模式由資料庫發號"); },
