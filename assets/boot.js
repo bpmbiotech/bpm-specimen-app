@@ -11,7 +11,8 @@
 
   const load = (src) => new Promise((res, rej) => {
     const s = document.createElement("script");
-    s.src = src;
+    // 部署版會由 build_site.ps1 寫入 CLOUD_ASSET_VER，避免 GitHub Pages 快取舊檔
+    s.src = src + (window.CLOUD_ASSET_VER ? "?v=" + window.CLOUD_ASSET_VER : "");
     s.onload = () => res();
     s.onerror = () => rej(new Error("載入失敗：" + src));
     document.body.appendChild(s);
