@@ -7,4 +7,4 @@ window.CLOUD_CONFIG = {
 };
 
 window.CLOUD_CONFIG.allowOffline = false;
-window.CLOUD_ASSET_VER = "202611251635";
+window.CLOUD_ASSET_VER = "202611251716";

@@ -880,7 +880,7 @@
       <div class="card" style="max-width:900px">
         <div class="row" style="margin-bottom:10px">
           <label><input type="radio" name="itype" value="request" checked onchange="App.setImpType('request')"> 需求清單</label>
-          <label style="margin-left:16px"><input type="radio" name="itype" value="new" onchange="App.setImpType('new')" ${St.role === "admin" ? "" : "disabled"}> 新增檢體</label>
+          <label style="margin-left:16px"><input type="radio" name="itype" value="new" onchange="App.setImpType('new')" ${St.role === "readonly" ? "disabled" : ""}> 新增檢體</label>
           <span class="muted" id="rolehint"></span>
         </div>
         <div class="row">
@@ -893,7 +893,7 @@
       </div>`;
     setImpType("request");
     const hint = $("#rolehint");
-    hint.textContent = St.role === "admin" ? "" : "（新增檢體僅 admin 可匯入）";
+    hint.textContent = St.role === "readonly" ? "（唯讀帳號不能匯入）" : "";
     updateSteps();
   }
 
@@ -1043,7 +1043,7 @@
   function setAck(v) { imp.ack = v; validate(); }
 
   async function doImport() {
-    if (imp.type === "new" && St.role !== "admin") { alert("新增檢體僅 admin 可執行"); return; }
+    if (imp.type === "new" && St.role === "readonly") { alert("唯讀帳號不能新增檢體（需要 operator 以上）"); return; }
     const rows = (imp.parsed || []).filter(r => r.status !== "err" && !r.skip);
     if (!rows.length) { alert("沒有可匯入的資料"); return; }
     if (imp.type === "new") { openImportConfirm(rows); return; }
@@ -1618,11 +1618,11 @@
   }
 
   /* ---------------- 帳號管理後台（admin） ---------------- */
-  const ROLE_NAME = { admin: "系統管理員", operator: "操作員", ai_readonly: "唯讀" };
+  const ROLE_NAME = { admin: "系統管理員", operator: "操作員", readonly: "唯讀" };
   const ROLE_DESC = {
-    admin: "全部權限，含新增檢體與帳號管理",
-    operator: "日常操作：清單、領出、入庫（不能新增檢體）",
-    ai_readonly: "只能看，不能做任何寫入",
+    admin: "全部權限：日常操作＋帳號管理" ,
+    operator: "日常操作：清單、領出、入庫、新增檢體匯入",
+    readonly: "只能看，不能做任何寫入",
   };
   let usersCache = [];
 
@@ -1672,7 +1672,7 @@
           onchange="App.userRename('${u.id}', this.value)"
           style="width:130px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font:inherit"></td>
       <td><select onchange="App.userSetRole('${u.id}', this.value)" ${u.id === myId() ? 'title="自己的角色"' : ""}>
-        ${["admin", "operator", "ai_readonly"].map((r) => `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`).join("")}
+        ${["admin", "operator", "readonly"].map((r) => `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`).join("")}
       </select><div class="muted" style="font-size:11px">${esc(ROLE_NAME[u.role] || "")}</div></td>
       <td>${u.active ? '<span class="tag ok">啟用</span>' : '<span class="tag err">停用</span>'}</td>
       <td>${u.last_sign_in_at ? fmt(u.last_sign_in_at) : '<span class="muted">尚未登入</span>'}</td>
@@ -1739,7 +1739,7 @@
         <label>名稱<input id="nu_name" placeholder="王小明" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:6px"></label>
         <label>角色<select id="nu_role" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:6px">
           <option value="operator">operator — ${ROLE_DESC.operator}</option>
-          <option value="ai_readonly">ai_readonly — ${ROLE_DESC.ai_readonly}</option>
+          <option value="readonly">readonly — ${ROLE_DESC.readonly}</option>
           <option value="admin">admin — ${ROLE_DESC.admin}</option>
         </select></label>
         <label>密碼
