@@ -1617,49 +1617,221 @@
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 3000);
   }
 
-  /* ---------------- 使用者與角色（admin） ---------------- */
+  /* ---------------- 帳號管理後台（admin） ---------------- */
+  const ROLE_NAME = { admin: "系統管理員", operator: "操作員", ai_readonly: "唯讀" };
+  const ROLE_DESC = {
+    admin: "全部權限，含新增檢體與帳號管理",
+    operator: "日常操作：清單、領出、入庫（不能新增檢體）",
+    ai_readonly: "只能看，不能做任何寫入",
+  };
+  let usersCache = [];
+
   function renderUsers() {
-    $("#view").innerHTML = `<h1 class="page">使用者與角色</h1>
+    $("#view").innerHTML = `<h1 class="page">帳號管理</h1>
       <div class="card" id="userbox"><div class="muted" style="padding:16px">載入中…</div></div>`;
     if (!St.cloud) {
-      $("#userbox").innerHTML = `<div class="muted" style="padding:16px">離線模式沒有使用者管理；請以雲端帳號登入。</div>`;
+      $("#userbox").innerHTML = `<div class="muted" style="padding:16px">離線模式沒有帳號管理；請以雲端帳號登入。</div>`;
       return;
     }
     if (St.role !== "admin") {
-      $("#userbox").innerHTML = `<div class="muted" style="padding:16px">僅 admin 可檢視使用者。</div>`;
+      $("#userbox").innerHTML = `<div class="muted" style="padding:16px">僅 admin 可檢視帳號管理。</div>`;
       return;
     }
+    loadUsers();
+  }
+
+  function loadUsers() {
+    const box = $("#userbox");
+    if (!box) return;
+    box.innerHTML = `<div class="muted" style="padding:16px">載入中…</div>`;
     St.listUsers().then((rows) => {
-      const roles = ["admin", "operator", "ai_readonly"];
-      const body = rows.map((u) => `<tr>
-        <td>${esc(u.email || "—")}</td>
-        <td>${esc(u.display_name || "—")}</td>
-        <td><select onchange="App.userRole('${u.id}', this.value)">
-          ${roles.map((r) => `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`).join("")}
-        </select></td>
-        <td>${u.active ? '<span class="tag ok">啟用</span>' : '<span class="tag err">停用</span>'}</td>
-        <td>${fmt(u.created_at)}</td>
-      </tr>`).join("");
-      $("#userbox").innerHTML = `
-        <div class="muted" style="margin-bottom:10px">共 ${rows.length} 位。admin＝全部；operator＝日常操作（不能新增檢體）；ai_readonly＝只能讀。</div>
-        <div class="scroll"><table class="tb"><thead><tr>
-          <th>Email</th><th>名稱</th><th>角色</th><th>狀態</th><th>建立時間</th>
-        </tr></thead><tbody>${body}</tbody></table></div>
-        <div class="muted" style="margin-top:10px">新增帳號請用 <code>tools/supabase/bootstrap.mjs</code>（或告知管理者）。</div>`;
+      usersCache = rows || [];
+      paintUsers();
     }).catch((e) => {
-      $("#userbox").innerHTML = `<div class="muted" style="padding:16px">載入失敗：${esc(e.message)}</div>`;
+      const msg = String(e.message || e);
+      const hint = /function|schema cache|does not exist/i.test(msg)
+        ? `<div class="muted" style="margin-top:8px">資料庫還沒套用 <code>db/07_users.sql</code>。</div>` : "";
+      box.innerHTML = `<div class="muted" style="padding:16px">載入失敗：${esc(msg)}${hint}</div>`;
     });
   }
 
-  async function userRole(id, role) {
-    if (!confirm(`確定把這位使用者的角色改為「${role}」？`)) { renderUsers(); return; }
+  function userStats() {
+    const s = { total: usersCache.length, admin: 0, operator: 0, ai_readonly: 0, off: 0 };
+    usersCache.forEach((u) => {
+      if (s[u.role] != null) s[u.role]++;
+      if (!u.active) s.off++;
+    });
+    return s;
+  }
+
+  function paintUsers() {
+    const st = userStats();
+    const rows = usersCache.map((u) => `<tr>
+      <td>${esc(u.email || "—")}<div class="muted" style="font-size:11px">${esc(String(u.id).slice(0, 8))}</div></td>
+      <td><input value="${esc(u.display_name || "")}" title="改完按 Enter 或點空白處儲存"
+          onchange="App.userRename('${u.id}', this.value)"
+          style="width:130px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font:inherit"></td>
+      <td><select onchange="App.userSetRole('${u.id}', this.value)" ${u.id === myId() ? 'title="自己的角色"' : ""}>
+        ${["admin", "operator", "ai_readonly"].map((r) => `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`).join("")}
+      </select><div class="muted" style="font-size:11px">${esc(ROLE_NAME[u.role] || "")}</div></td>
+      <td>${u.active ? '<span class="tag ok">啟用</span>' : '<span class="tag err">停用</span>'}</td>
+      <td>${u.last_sign_in_at ? fmt(u.last_sign_in_at) : '<span class="muted">尚未登入</span>'}</td>
+      <td>${fmt(u.created_at)}</td>
+      <td style="white-space:nowrap">
+        <button class="btn" style="padding:3px 8px;font-size:12px" onclick="App.userPw('${u.id}')">重設密碼</button>
+        <button class="btn" style="padding:3px 8px;font-size:12px" ${u.id === myId() ? "disabled" : ""}
+          onclick="App.userToggle('${u.id}')" id="tg_${u.id}">${u.active ? "停用" : "啟用"}</button>
+        <button class="btn danger" style="padding:3px 8px;font-size:12px" ${u.id === myId() ? "disabled" : ""}
+          onclick="App.userDel('${u.id}')">刪除</button>
+      </td>
+    </tr>`).join("");
+
+    $("#userbox").innerHTML = `
+      <div class="row" style="margin-bottom:12px">
+        <b style="font-size:15px">共 ${st.total} 位</b>
+        <span class="tag">admin ${st.admin}</span>
+        <span class="tag">operator ${st.operator}</span>
+        <span class="tag">ai_readonly ${st.ai_readonly}</span>
+        ${st.off ? `<span class="tag err">停用 ${st.off}</span>` : ""}
+        <span style="flex:1"></span>
+        <button class="btn" onclick="App.reloadUsers()">重新整理</button>
+        <button class="btn primary" onclick="App.userNew()">＋ 新增帳號</button>
+      </div>
+      <div class="scroll"><table class="tb"><thead><tr>
+        <th>Email</th><th>名稱</th><th>角色</th><th>狀態</th><th>最後登入</th><th>建立時間</th><th>操作</th>
+      </tr></thead><tbody>${rows || '<tr><td colspan="7" class="muted">尚無帳號</td></tr>'}</tbody></table></div>
+      <div class="muted" style="margin-top:10px;line-height:1.7">
+        <b>admin</b>＝${ROLE_DESC.admin}<br>
+        <b>operator</b>＝${ROLE_DESC.operator}<br>
+        <b>ai_readonly</b>＝${ROLE_DESC.ai_readonly}<br>
+        停用後該帳號無法登入讀取；刪除會一併移除登入帳號（無法復原）。
+      </div>`;
+  }
+
+  function myId() { return window.CLOUD_UID || ""; }
+
+  function openUserModal(html) {
+    const m = $("#usermodal");
+    if (!m) return;
+    $("#userpanel").innerHTML = html;
+    m.classList.add("on");
+  }
+  function closeUserModal() { const m = $("#usermodal"); if (m) m.classList.remove("on"); }
+
+  function genPw(id) {
+    const cs = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    const a = new Uint32Array(14);
+    (window.crypto || {}).getRandomValues ? crypto.getRandomValues(a) : a.forEach((_, i) => a[i] = Math.floor(Math.random() * 1e9));
+    let s = "";
+    for (let i = 0; i < a.length; i++) s += cs[a[i] % cs.length];
+    const el = document.getElementById(id);
+    if (el) { el.type = "text"; el.value = s; }
+    return s;
+  }
+
+  function userNew() {
+    openUserModal(`
+      <button class="close" onclick="App.userClose()">關閉</button>
+      <h3>新增帳號</h3>
+      <div class="sub">建立後即可用這個 Email／密碼登入，角色之後可隨時調整。</div>
+      <div style="display:grid;gap:10px">
+        <label>Email<input id="nu_email" type="email" placeholder="name@company.com" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:6px"></label>
+        <label>名稱<input id="nu_name" placeholder="王小明" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:6px"></label>
+        <label>角色<select id="nu_role" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:6px">
+          <option value="operator">operator — ${ROLE_DESC.operator}</option>
+          <option value="ai_readonly">ai_readonly — ${ROLE_DESC.ai_readonly}</option>
+          <option value="admin">admin — ${ROLE_DESC.admin}</option>
+        </select></label>
+        <label>密碼
+          <div class="row" style="gap:6px;margin-top:4px;flex-wrap:nowrap">
+            <input id="nu_pw" style="flex:1;padding:8px;border:1px solid var(--line);border-radius:6px" placeholder="至少 6 碼">
+            <button class="btn" onclick="App.genPw('nu_pw')">產生</button>
+          </div>
+        </label>
+      </div>
+      <div class="row" style="margin-top:16px;justify-content:flex-end">
+        <button class="btn" onclick="App.userClose()">取消</button>
+        <button class="btn primary" onclick="App.userCreate()">建立帳號</button>
+      </div>`);
+    setTimeout(() => { const el = document.getElementById("nu_email"); if (el) el.focus(); }, 60);
+  }
+
+  async function userCreate() {
+    const v = (id) => (document.getElementById(id) || {}).value || "";
+    const email = v("nu_email").trim();
+    const name = v("nu_name").trim();
+    const role = v("nu_role") || "operator";
+    const pw = v("nu_pw");
+    if (!email.includes("@")) { alert("請填正確的 Email"); return; }
+    if (pw.length < 6) { alert("密碼至少 6 碼（可按「產生」）"); return; }
     try {
-      await St.setUserRole(id, role);
-      alert("角色已更新");
+      await St.createUser({ email, password: pw, display_name: name, role });
+      closeUserModal();
+      try { await navigator.clipboard.writeText(`${email}\n${pw}`); } catch (e) {}
+      alert(`已建立帳號\n\nEmail：${email}\n密碼：${pw}\n角色：${role}\n\n（已複製到剪貼簿，請自行轉交，勿留在公開頻道）`);
+      loadUsers();
     } catch (e) {
-      alert("更新失敗：" + e.message);
+      alert("建立失敗：" + e.message);
     }
-    renderUsers();
+  }
+
+  function userPw(id) {
+    const u = usersCache.find((x) => x.id === id) || {};
+    openUserModal(`
+      <button class="close" onclick="App.userClose()">關閉</button>
+      <h3>重設密碼</h3>
+      <div class="sub">${esc(u.email || "")}</div>
+      <div class="row" style="gap:6px;flex-wrap:nowrap">
+        <input id="rp_pw" style="flex:1;padding:8px;border:1px solid var(--line);border-radius:6px" placeholder="至少 6 碼">
+        <button class="btn" onclick="App.genPw('rp_pw')">產生</button>
+      </div>
+      <div class="row" style="margin-top:16px;justify-content:flex-end">
+        <button class="btn" onclick="App.userClose()">取消</button>
+        <button class="btn primary" onclick="App.userPwSave('${id}')">套用新密碼</button>
+      </div>`);
+    setTimeout(() => { const el = document.getElementById("rp_pw"); if (el) el.focus(); }, 60);
+  }
+
+  async function userPwSave(id) {
+    const el = document.getElementById("rp_pw");
+    const pw = el ? el.value : "";
+    if (pw.length < 6) { alert("密碼至少 6 碼"); return; }
+    try {
+      await St.setPassword(id, pw);
+      closeUserModal();
+      try { await navigator.clipboard.writeText(pw); } catch (e) {}
+      alert(`密碼已更新（已複製）：${pw}`);
+    } catch (e) {
+      alert("重設失敗：" + e.message);
+    }
+  }
+
+  async function userRename(id, name) {
+    try { await St.updateUser(id, { display_name: String(name || "").trim() }); loadUsers(); }
+    catch (e) { alert("改名失敗：" + e.message); }
+  }
+
+  async function userSetRole(id, role) {
+    const u = usersCache.find((x) => x.id === id) || {};
+    if (!confirm(`把「${u.email || id}」的角色改為 ${role}（${ROLE_NAME[role] || ""}）？`)) { paintUsers(); return; }
+    try { await St.updateUser(id, { role }); loadUsers(); }
+    catch (e) { alert("改角色失敗：" + e.message); paintUsers(); }
+  }
+
+  async function userToggle(id) {
+    const u = usersCache.find((x) => x.id === id) || {};
+    const next = !u.active;
+    if (!confirm(`${next ? "啟用" : "停用"}「${u.email || id}」？${next ? "" : "\n停用後該帳號將無法登入或讀取資料。"}`)) return;
+    try { await St.updateUser(id, { active: next }); loadUsers(); }
+    catch (e) { alert("更新失敗：" + e.message); }
+  }
+
+  async function userDel(id) {
+    const u = usersCache.find((x) => x.id === id) || {};
+    if (!confirm(`刪除「${u.email || id}」？\n\n這會一併移除登入帳號，無法復原。`)) return;
+    if (!confirm("確定要刪除？（第二次確認）")) return;
+    try { await St.deleteUser(id); loadUsers(); }
+    catch (e) { alert("刪除失敗：" + e.message); }
   }
 
   /* ---------------- 交易紀錄 ---------------- */
@@ -1943,7 +2115,8 @@
     newList, delList, markMissing, exportList, toggleAll, swapTube,
     checkout: openCheckout, pick: openCheckout,
     ckField, ckAck, ckStep, ckConfirm, ckClose, ckSaveXlsx,
-    userRole,
+    reloadUsers: loadUsers, userNew, userCreate, userPw, userPwSave,
+    userRename, userSetRole, userToggle, userDel, userClose: closeUserModal, genPw,
     setImpType, onFile, template, loadSample, setAck, doImport, exportLedger, exportConflicts,
     sfSet, sfExport, gotoStudy, pickInvalidate,
     mgSet, mgPlan, mgExport,
@@ -1957,7 +2130,8 @@
   document.getElementById("role").value = St.role;
   document.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
-    if ($("#confmodal").classList.contains("on")) impConfirmClose();
+    if ($("#usermodal") && $("#usermodal").classList.contains("on")) closeUserModal();
+    else if ($("#confmodal").classList.contains("on")) impConfirmClose();
     else if ($("#outmodal").classList.contains("on")) ckClose();
     else if ($("#modal").classList.contains("on")) $("#modal").classList.remove("on");
   });

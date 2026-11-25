@@ -34,6 +34,7 @@
       access_token: d.access_token,
       refresh_token: d.refresh_token,
       email: (d.user && d.user.email) || email,
+      uid: (d.user && d.user.id) || null,
       expires_at: Date.now() + ((d.expires_in || 3600) - 60) * 1000,
     };
     saveSession(s);
@@ -49,6 +50,7 @@
         access_token: d.access_token,
         refresh_token: d.refresh_token || s.refresh_token,
         email: s.email,
+        uid: s.uid,
         expires_at: Date.now() + ((d.expires_in || 3600) - 60) * 1000,
       };
       saveSession(n);
@@ -76,13 +78,14 @@
   const snapshot = () => rpc("fn_snapshot", {});
 
   async function myRole() {
-    const r = await call("/rest/v1/app_user?select=role,display_name&limit=1");
+    const r = await call("/rest/v1/app_user?select=id,role,display_name&limit=1");
     return (r && r[0]) || null;
   }
 
   const signOut = () => saveSession(null);
   const sessionEmail = () => { const s = loadSession(); return s && s.email; };
+  const sessionUid = () => { const s = loadSession(); return s && s.uid; };
   const hasSession = () => !!loadSession();
 
-  window.Cloud = { CFG, signIn, signOut, token, call, rpc, snapshot, myRole, sessionEmail, hasSession };
+  window.Cloud = { CFG, signIn, signOut, token, call, rpc, snapshot, myRole, sessionEmail, sessionUid, hasSession };
 })();

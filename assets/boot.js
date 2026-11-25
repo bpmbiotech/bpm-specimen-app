@@ -103,6 +103,7 @@
   async function startApp(snap) {
     const me = await window.Cloud.myRole().catch(() => null);
     window.CLOUD_ROLE = (me && me.role) || "operator";
+    window.CLOUD_UID = (me && me.id) || window.Cloud.sessionUid() || "";
     window.CLOUD_EMAIL = (me && me.display_name) || window.Cloud.sessionEmail() || "";
     badge("雲端 · " + (window.Cloud.sessionEmail() || ""));
     await load("assets/store-cloud.js");

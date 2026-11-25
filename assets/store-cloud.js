@@ -306,6 +306,18 @@
       drawOut, markMissing, importRows,
       listUsers: () => C.rpc("fn_list_users"),
       setUserRole: (id, role) => C.rpc("fn_set_user_role", { p_id: id, p_role: role }),
+      updateUser: (id, patch) => C.rpc("fn_update_user", {
+        p_id: id,
+        p_display_name: patch && patch.display_name != null ? patch.display_name : null,
+        p_role: patch && patch.role != null ? patch.role : null,
+        p_active: patch && patch.active != null ? patch.active : null,
+      }),
+      createUser: (u) => C.rpc("fn_create_user", {
+        p_email: u.email, p_password: u.password,
+        p_display_name: u.display_name || null, p_role: u.role || "operator",
+      }),
+      setPassword: (id, pw) => C.rpc("fn_set_password", { p_id: id, p_password: pw }),
+      deleteUser: (id) => C.rpc("fn_delete_user", { p_id: id }),
       addExtra() { throw new Error("雲端模式不支援直接新增位置"); },
       addMovement() { /* 由 RPC 寫入 */ },
       nextNo() { throw new Error("雲端模式由資料庫發號"); },
