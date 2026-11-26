@@ -94,10 +94,19 @@
     document.getElementById("ck_pw").onkeydown = (e) => { if (e.key === "Enter") go(); };
   }
 
-  function loading(msg) {
+  function loading(msg, sub) {
     overlay(`<div style="text-align:center;padding:10px 0">
       <div style="font-size:13px;color:#1F3864;font-weight:600;margin-bottom:6px">${msg}</div>
-      <div style="font-size:12px;color:#6b7280">首次載入約 5–10 秒</div></div>`);
+      <div style="font-size:12px;color:#6b7280">${sub || "首次載入約 5–10 秒"}</div></div>`);
+  }
+
+  function errorOverlay(msg, retry) {
+    const el = overlay(`<h2 style="margin:0 0 4px;font-size:16px;color:#B03A2E">讀取雲端資料失敗</h2>
+      <div id="boot_err" style="font-size:12px;color:#374151;margin:8px 0 14px;line-height:1.6;word-break:break-word"></div>
+      <button id="boot_retry" style="width:100%;padding:9px;border:0;border-radius:6px;background:#1F3864;color:#fff;font-size:13px;cursor:pointer">重試</button>
+      <div style="font-size:11px;color:#9aa3b2;margin-top:10px;text-align:center">若一直失敗，請確認 Supabase 專案沒有被暫停</div>`);
+    el.querySelector("#boot_err").textContent = msg;
+    el.querySelector("#boot_retry").onclick = retry;
   }
 
   async function startApp(snap) {
@@ -117,10 +126,19 @@
       loading("登入中…");
       await window.Cloud.signIn(email, password);
       loading("讀取雲端資料…");
-      const snap = await window.Cloud.snapshot();
+      const snap = await window.Cloud.snapshot({
+        onRetry: (n) => loading(`伺服器忙碌，正在重試（${n}/4）…`, "資料量大時第一次載入會慢一點"),
+      });
       await startApp(snap);
     } catch (e) {
-      loginForm(e.message || "登入失敗");
+      const msg = String((e && e.message) || e);
+      const status = e && e.status;
+      if (status === 400 || status === 401) {
+        window.Cloud.signOut();
+        loginForm(/credential|invalid|password|密碼/i.test(msg) ? "Email 或密碼錯誤" : msg);
+        return;
+      }
+      errorOverlay(msg, () => submit(email, password));
     }
   }
 
@@ -129,11 +147,18 @@
     if (!window.Cloud.hasSession()) return;
     try {
       loading("讀取雲端資料…");
-      const snap = await window.Cloud.snapshot();
+      const snap = await window.Cloud.snapshot({
+        onRetry: (n) => loading(`伺服器忙碌，正在重試（${n}/4）…`, "資料量大時第一次載入會慢一點"),
+      });
       await startApp(snap);
     } catch (e) {
-      window.Cloud.signOut();
-      loginForm("登入已過期，請重新登入");
+      const status = e && e.status;
+      if (status === 400 || status === 401) {
+        window.Cloud.signOut();
+        loginForm("登入已過期，請重新登入");
+        return;
+      }
+      errorOverlay(String((e && e.message) || e), bootCloud);
     }
   }
 

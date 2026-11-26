@@ -74,8 +74,29 @@
 
   const rpc = (fn, body = {}) => call("/rest/v1/rpc/" + fn, { method: "POST", body });
 
-  /* 一次抓完整快照（1 個請求取代 113 次分頁） */
-  const snapshot = () => rpc("fn_snapshot", {});
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  /* 一次抓完整快照（1 個請求取代 113 次分頁）
+   * 冷啟動或資料量大時偶爾會出現 statement timeout／閘道逾時，這裡自動重試。 */
+  async function snapshot(opts = {}) {
+    const tries = opts.tries || 4;
+    const onRetry = opts.onRetry || (() => {});
+    let last = null;
+    for (let i = 0; i < tries; i++) {
+      try {
+        return await rpc("fn_snapshot", {});
+      } catch (e) {
+        last = e;
+        const msg = String((e && e.message) || "");
+        const retryable = (e && [502, 503, 504].includes(e.status)) ||
+          /timeout|timed out|upstream|ECONNRESET|Failed to fetch|NetworkError|fetch failed/i.test(msg);
+        if (!retryable || i === tries - 1) break;
+        await sleep(1200 * (i + 1));
+        try { onRetry(i + 2, msg); } catch (x) { /* ignore */ }
+      }
+    }
+    throw last;
+  }
 
   async function myRole() {
     const r = await call("/rest/v1/app_user?select=id,role,display_name&limit=1");

@@ -1622,7 +1622,7 @@
   const ROLE_DESC = {
     admin: "全部權限：日常操作＋帳號管理" ,
     operator: "日常操作：清單、領出、入庫、新增檢體匯入",
-    readonly: "只能看，不能做任何寫入",
+    readonly: "只能看：冰箱地圖、檢體分布、清單查詢都可用；不能領出、標記缺、新增檢體、管理帳號",
   };
   let usersCache = [];
 
@@ -1656,7 +1656,7 @@
   }
 
   function userStats() {
-    const s = { total: usersCache.length, admin: 0, operator: 0, ai_readonly: 0, off: 0 };
+    const s = { total: usersCache.length, admin: 0, operator: 0, readonly: 0, off: 0 };
     usersCache.forEach((u) => {
       if (s[u.role] != null) s[u.role]++;
       if (!u.active) s.off++;
@@ -1691,7 +1691,7 @@
         <b style="font-size:15px">共 ${st.total} 位</b>
         <span class="tag">admin ${st.admin}</span>
         <span class="tag">operator ${st.operator}</span>
-        <span class="tag">ai_readonly ${st.ai_readonly}</span>
+        <span class="tag">readonly ${st.readonly}</span>
         ${st.off ? `<span class="tag err">停用 ${st.off}</span>` : ""}
         <span style="flex:1"></span>
         <button class="btn" onclick="App.reloadUsers()">重新整理</button>
@@ -1703,7 +1703,7 @@
       <div class="muted" style="margin-top:10px;line-height:1.7">
         <b>admin</b>＝${ROLE_DESC.admin}<br>
         <b>operator</b>＝${ROLE_DESC.operator}<br>
-        <b>ai_readonly</b>＝${ROLE_DESC.ai_readonly}<br>
+        <b>readonly</b>＝${ROLE_DESC.readonly}<br>
         停用後該帳號無法登入讀取；刪除會一併移除登入帳號（無法復原）。
       </div>`;
   }
