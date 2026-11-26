@@ -844,11 +844,11 @@
   }
 
   /* ---------------- 匯入 ---------------- */
-  let imp = { rows: [], header: [], type: "request", parsed: null, ack: false, canImport: false };
+  let imp = { rows: [], header: [], headerRow: 0, type: "request", parsed: null, ack: false, canImport: false, running: false };
 
   const STEP_LABELS = ["選類型", "上傳", "驗證", "匯入"];
   const STEP_NOTES = [
-    "① 選類型：先選「需求清單」或「新增檢體」",
+    "① 選類型：需求清單／新增檢體／整併領出／入庫（放回）",
     "② 上傳：選 Excel／CSV 檔，或按「載入範例資料」試跑",
     "③ 驗證：檢查每列結果；錯誤列不匯入，警告列要勾「我已確認警告」",
     "④ 匯入：按「確認匯入」完成",
@@ -878,9 +878,11 @@
       <div class="steps" id="steps"></div>
       <div class="stepnote muted" id="stepnote"></div>
       <div class="card" style="max-width:900px">
-        <div class="row" style="margin-bottom:10px">
+        <div class="row" style="margin-bottom:10px;flex-wrap:wrap;gap:10px">
           <label><input type="radio" name="itype" value="request" checked onchange="App.setImpType('request')"> 需求清單</label>
-          <label style="margin-left:16px"><input type="radio" name="itype" value="new" onchange="App.setImpType('new')" ${St.role === "readonly" ? "disabled" : ""}> 新增檢體</label>
+          <label><input type="radio" name="itype" value="new" onchange="App.setImpType('new')" ${St.role === "readonly" ? "disabled" : ""}> 新增檢體</label>
+          <label><input type="radio" name="itype" value="mergeout" onchange="App.setImpType('mergeout')" ${St.role === "readonly" ? "disabled" : ""}> 整併領出</label>
+          <label><input type="radio" name="itype" value="putback" onchange="App.setImpType('putback')" ${St.role === "readonly" ? "disabled" : ""}> 入庫（放回）</label>
           <span class="muted" id="rolehint"></span>
         </div>
         <div class="row">
@@ -906,8 +908,17 @@
         ["DEMO0102", "NTUH", "1", "重複列"],
         ["DEMO9999", "NTUH", "1", "找不到"],
       ];
+    } else if (imp.type === "mergeout") {
+      /* 用目前真的在庫的前 5 支當範例（位置是真的，SID 也是真的） */
+      const pool = St.allAliquots().filter(a => a.box && St.status(a.key) === "in_stock").slice(0, 5);
+      if (!pool.length) { alert("目前沒有在庫檢體可示範"); return; }
+      imp.header = ["SID", "Study", "原位置", "新位置"];
+      imp.rows = pool.map(a => [a.sid, a.study, a.box + a.pos, ""]);
+    } else if (imp.type === "putback") {
+      alert("入庫請直接選整併 Excel 的「入庫清單」工作表；\n示範資料需要先有已領出的檢體，這裡不自動產生。");
+      return;
     } else {
-      imp.header = ["SID", "Study", "Allocation", "Volume", "Samplingdate", "Note"];
+      imp.header = ["SID", "Study", "位置", "Volume", "Samplingdate", "Note"];
       imp.rows = [
         ["DEMO0001", "NTUH", "H2541I1", "1.5", "2024-07-12", ""],
         ["DEMO0002", "NTUH", "H1111A1", "1.5", "2020-01-01", "佔用測試"],
@@ -915,27 +926,65 @@
         ["DEMO0004", "NTUH", "Q2141A1", "1.5", "2026-01-01", "新入庫"],
       ];
     }
+    imp.headerRow = 0;
     validate();
   }
 
   function setImpType(t) {
-    imp.type = t; imp.parsed = null; imp.ack = false; imp.canImport = false;
+    imp.type = t; imp.parsed = null; imp.ack = false; imp.canImport = false; imp.headerRow = 0;
+    const hints = {
+      request: "需求清單欄位：SID、Study、數量、備註（數量不足會部分成立）",
+      new: "新增檢體欄位：SID、Study、位置、Volume、Samplingdate、Note（位置例：H2541I1；同一 SID 可有多支，直接入庫）",
+      mergeout: "整併領出：SID、Study、原位置（可直接選整併 Excel 的「領出清單」工作表，SID 只用來核對）",
+      putback: "入庫（放回）：SID、原位置、新位置（可直接選整併 Excel 的「入庫清單」工作表；只處理已領出的檢體）",
+    };
     const hint = $("#hint");
-    hint.textContent = t === "request"
-      ? "需求清單欄位：SID、Study、數量、備註（數量不足會部分成立）"
-      : "新增檢體欄位：SID、Study、Allocation、Volume、Samplingdate、Note（同一 SID 可有多支，直接入庫）";
-    $("#preview").innerHTML = "";
+    if (hint) hint.textContent = hints[t] || "";
+    const pv = $("#preview");
+    if (pv) pv.innerHTML = "";
     updateSteps();
   }
 
   function template() {
-    const rows = imp.type === "request"
-      ? [["SID", "Study", "數量", "備註"], ["DEMO0101", "NTUH", "1", ""], ["DEMO0102", "NTUH", "2", "B 計畫"]]
-      : [["SID", "Study", "Allocation", "Volume", "Samplingdate", "Note"], ["DEMO0001", "NTUH", "H2541I1", "1.5", "2024-07-12", ""]];
-    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const defs = {
+      request: {
+        rows: [["SID", "Study", "數量", "備註"], ["DEMO0101", "NTUH", "1", ""], ["DEMO0102", "NTUH", "2", "B 計畫"]],
+        sheet: "需求清單", file: "需求清單範本.xlsx",
+      },
+      new: {
+        rows: [["SID", "Study", "位置", "Volume", "Samplingdate", "Note"], ["DEMO0001", "NTUH", "H2541I1", "1.5", "2024-07-12", ""]],
+        sheet: "新增檢體", file: "新增檢體範本.xlsx",
+      },
+      mergeout: {
+        rows: [["SID", "Study", "原位置", "新位置"], ["DEMO0001", "NTUH", "H1111A1", "H1111B1"]],
+        sheet: "領出清單", file: "整併領出清單範本.xlsx",
+      },
+      putback: {
+        rows: [["SID", "Study", "原位置", "新位置"], ["DEMO0001", "NTUH", "H1111A1", "H1111B1"]],
+        sheet: "入庫清單", file: "整併入庫清單範本.xlsx",
+      },
+    };
+    const d = defs[imp.type] || defs.new;
+    const ws = XLSX.utils.aoa_to_sheet(d.rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-    XLSX.writeFile(wb, imp.type === "request" ? "需求清單範本.xlsx" : "新增檢體範本.xlsx");
+    XLSX.utils.book_append_sheet(wb, ws, d.sheet);
+    XLSX.writeFile(wb, d.file);
+  }
+
+  function pickSheet(wb) {
+    const want = imp.type === "mergeout" ? "領出" : imp.type === "putback" ? "入庫" : "";
+    if (want) {
+      const hit = wb.SheetNames.find(n => String(n).includes(want));
+      if (hit) return wb.Sheets[hit];
+    }
+    for (const n of wb.SheetNames) {
+      const aoa = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: "" });
+      for (let i = 0; i < Math.min(6, aoa.length); i++) {
+        const cells = (aoa[i] || []).map(c => String(c).trim());
+        if (cells.some(c => /^SID$/i.test(c)) && cells.some(c => /原位置|原盒|位置|Allocation/i.test(c))) return wb.Sheets[n];
+      }
+    }
+    return wb.Sheets[wb.SheetNames[0]];
   }
 
   function onFile(input) {
@@ -943,11 +992,17 @@
     const reader = new FileReader();
     reader.onload = e => {
       const wb = XLSX.read(e.target.result, { type: "array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
+      const ws = pickSheet(wb);
       const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
       if (!aoa.length) { alert("檔案沒有資料"); return; }
-      imp.header = aoa[0].map(x => String(x).trim());
-      imp.rows = aoa.slice(1).filter(r => r.some(c => String(c).trim() !== ""));
+      /* 整併 Excel 前兩列是標題／副標，往下找真正的表頭（有 SID 那一列） */
+      let h = 0;
+      for (let i = 0; i < Math.min(10, aoa.length); i++) {
+        if ((aoa[i] || []).some(c => /^SID$/i.test(String(c).trim()))) { h = i; break; }
+      }
+      imp.headerRow = h;
+      imp.header = (aoa[h] || []).map(x => String(x).trim());
+      imp.rows = aoa.slice(h + 1).filter(r => r.some(c => String(c).trim() !== ""));
       validate();
     };
     reader.readAsArrayBuffer(f);
@@ -965,17 +1020,77 @@
     return -1;
   }
 
+  /* 多個可能欄名，回傳第一個找到的索引 */
+  function colAny() {
+    for (let k = 0; k < arguments.length; k++) {
+      const name = String(arguments[k]).toLowerCase();
+      const i = imp.header.findIndex(h => String(h).trim().toLowerCase() === name);
+      if (i >= 0) return i;
+    }
+    return -1;
+  }
+
+  /* 位置代碼：盒號 + 排 + 欄，例 S2511G8、Q2211J10 */
+  const POS_CODE_RE = /^([A-Z]\d{2,4})([A-J](?:[1-9]|10))$/;
+  function parsePos(v) {
+    const m = String(v == null ? "" : v).trim().toUpperCase().match(POS_CODE_RE);
+    return m ? { box: m[1], pos: m[2] } : null;
+  }
+  function posInRange(box, pos) {
+    if (!/^[A-Z]\d{2,4}$/.test(box) || !/^[A-J]([1-9]|10)$/.test(pos)) return false;
+    const c = box[0], g = S.grid[c];
+    if (!g) return false;
+    const layer = +box[1], drawer = +box[2], tier = +box[3], seq = +box[4];
+    if (layer < 1 || layer > g[0]) return false;
+    if (drawer < 1 || drawer > g[1]) return false;
+    if (tier < 1 || tier > drawerRows(c, layer, drawer)) return false;
+    if (seq < 1 || seq > g[3]) return false;
+    const dim = boxDim(box);
+    if (pos.charCodeAt(0) - 65 >= dim.rows) return false;
+    const colN = +pos.slice(1);
+    return colN >= 1 && colN <= dim.cols;
+  }
+
   function validate() {
     const out = [];
-    const iSID = col("SID"), iStudy = col("Study"), iQty = col("數量"),
-      iAlloc = col("Allocation"), iVol = col("Volume"), iDate = col("Samplingdate"), iNote = col("Note");
+    const iSID = colAny("SID");
+    const iStudy = colAny("Study");
+    const iQty = colAny("數量", "Qty", "Quantity");
+    const iAlloc = colAny("位置", "Allocation", "Position");
+    const iVol = colAny("Volume", "容量", "容量(mL)");
+    const iDate = colAny("Samplingdate", "採檢日");
+    const iNote = colAny("Note", "備註");
+    const iFrom = colAny("原位置", "FromPosition");
+    const iFromBox = colAny("原盒", "FromBox");
+    const iTo = colAny("新位置", "ToPosition");
+    const iToBox = colAny("新盒", "ToBox");
     const seen = new Set();
+    const targetSeen = new Set();
     const all = St.allAliquots();
+    const posMap = new Map();
+    all.forEach((a) => {
+      if (!a.box || !a.pos) return;
+      const k = a.box + "|" + a.pos;
+      const cur = posMap.get(k);
+      if (!cur || (St.status(cur.key) !== "in_stock" && St.status(a.key) === "in_stock")) posMap.set(k, a);
+    });
+    /* 位置可接受「S2511G8」單欄，或「盒 S2511 + 位置 G8」兩欄 */
+    const readPos = (v, boxIdx, r) => {
+      const raw = String(v ?? "").trim().toUpperCase();
+      let p = parsePos(raw);
+      if (p) return p;
+      if (boxIdx >= 0) {
+        const bx = String(r[boxIdx] ?? "").trim().toUpperCase();
+        if (bx) p = parsePos(bx + raw);
+      }
+      return p;
+    };
+    const rowOffset = (imp.headerRow || 0) + 2;
 
     imp.rows.forEach((r, n) => {
       const sid = String(r[iSID] ?? "").trim();
       const study = String(r[iStudy] ?? "").trim();
-      const row = { n: n + 2, sid, study, status: "ok", msgs: [] };
+      const row = { n: n + rowOffset, sid, study, status: "ok", msgs: [] };
       if (!sid || !study) { row.status = "err"; row.msgs.push("E07 必填欄位空白"); out.push(row); return; }
 
       if (imp.type === "request") {
@@ -992,26 +1107,52 @@
         row.targets = found.slice(0, row.qty).map(a => ({ key: a.key, box: a.box, pos: a.pos, sid: a.sid, study: a.study }));
         /* 同一 SID 可能有多管：把全部候選帶著，讓清單工作台可以改選 */
         row.alts = found.map(a => ({ key: a.key, box: a.box, pos: a.pos, vol: a.vol == null ? "" : a.vol, date: a.date || "" }));
-      } else {
+      } else if (imp.type === "new") {
         const alloc = String(r[iAlloc] ?? "").trim().toUpperCase();
         row.alloc = alloc;
-        if (!/^[A-Z]\d{4}[A-Z]\d{1,2}$/.test(alloc)) { row.status = "err"; row.msgs.push("E01 位置格式錯誤"); out.push(row); return; }
-        const c = alloc[0], box = alloc.slice(0, 5), pos = alloc.slice(5);
-        const g = S.grid[c];
-        if (!g) { row.status = "err"; row.msgs.push("E02 盒號不存在"); out.push(row); return; }
-        const dim = boxDim(box);
-        const inRange = +box[1] >= 1 && +box[1] <= g[0] && +box[2] >= 1 && +box[2] <= g[1] &&
-          +box[3] >= 1 && +box[3] <= drawerRows(c, +box[1], +box[2]) && +box[4] >= 1 && +box[4] <= g[3] &&
-          pos.charCodeAt(0) - 65 < dim.rows && +pos.slice(1) >= 1 && +pos.slice(1) <= dim.cols;
-        if (!inRange) { row.status = "err"; row.msgs.push("E02 盒號超出範圍"); out.push(row); return; }
-        const occupied = St.boxEntries(c, box).filter(a => a.pos === pos && St.status(a.key) === "in_stock");
-        if (occupied.length) {
-          if (occupied.some(a => a.sid === sid)) { row.status = "warn"; row.msgs.push("W07 同 SID 已在此位置（略過）"); row.skip = true; }
-          else { row.status = "err"; row.msgs.push("E03 位置已被 " + occupied[0].sid + " 佔用"); out.push(row); return; }
+        const p = parsePos(alloc);
+        if (!p) { row.status = "err"; row.msgs.push("E01 位置格式錯誤"); out.push(row); return; }
+        if (!posInRange(p.box, p.pos)) { row.status = "err"; row.msgs.push("E02 盒號或位置超出範圍"); out.push(row); return; }
+        const occupied = posMap.get(p.box + "|" + p.pos);
+        if (occupied && St.status(occupied.key) === "in_stock") {
+          if (occupied.sid === sid) { row.status = "warn"; row.msgs.push("W07 同 SID 已在此位置（略過）"); row.skip = true; }
+          else { row.status = "err"; row.msgs.push("E03 位置已被 " + occupied.sid + " 佔用"); out.push(row); return; }
         }
+        row.alloc = p.box + p.pos;
         row.vol = String(r[iVol] ?? "").trim();
         row.date = String(r[iDate] ?? "").trim();
         row.note = String(r[iNote] ?? "").trim();
+      } else if (imp.type === "mergeout") {
+        /* 整併領出清單：用原位置精準對到在庫檢體 */
+        const from = readPos(r[iFrom], iFromBox, r);
+        if (!from) { row.status = "err"; row.msgs.push("E10 原位置空白或格式錯誤"); out.push(row); return; }
+        row.fromCode = from.box + from.pos;
+        const a = posMap.get(from.box + "|" + from.pos);
+        if (!a) { row.status = "err"; row.msgs.push("E13 找不到此位置的在庫檢體"); out.push(row); return; }
+        if (St.status(a.key) !== "in_stock") { row.status = "err"; row.msgs.push("E13 此位置的檢體已不在庫"); out.push(row); return; }
+        if (String(a.sid) !== sid) { row.status = "err"; row.msgs.push("E14 系統位置上的 SID 是 " + a.sid); out.push(row); return; }
+        if (seen.has(a.key)) { row.status = "warn"; row.msgs.push("W10 檔內重複（已合併）"); row.skip = true; }
+        else { seen.add(a.key); row.aliquot = a; row.targets = [a]; }
+      } else {
+        /* 入庫（放回）：SID＋原位置 找已領出的那一支，放到新位置 */
+        const from = readPos(r[iFrom], iFromBox, r);
+        const to = readPos(r[iTo], iToBox, r);
+        if (!from) { row.status = "err"; row.msgs.push("E20 原位置空白或格式錯誤"); out.push(row); return; }
+        if (!to) { row.status = "err"; row.msgs.push("E20 新位置空白或格式錯誤"); out.push(row); return; }
+        row.fromCode = from.box + from.pos;
+        row.toCode = to.box + to.pos;
+        const a = posMap.get(from.box + "|" + from.pos);
+        if (!a) { row.status = "err"; row.msgs.push("E22 找不到此位置的檢體（可能還沒領出）"); out.push(row); return; }
+        if (String(a.sid) !== sid) { row.status = "err"; row.msgs.push("E22 系統位置上的 SID 是 " + a.sid); out.push(row); return; }
+        if (St.status(a.key) !== "out") { row.status = "err"; row.msgs.push("E23 這支不是已領出狀態（目前 " + St.status(a.key) + "）"); out.push(row); return; }
+        if (!posInRange(to.box, to.pos)) { row.status = "err"; row.msgs.push("E24 新位置超出盒型範圍"); out.push(row); return; }
+        const occ = posMap.get(to.box + "|" + to.pos);
+        if (occ && St.status(occ.key) === "in_stock" && occ.key !== a.key) { row.status = "err"; row.msgs.push("E25 新位置已被 " + occ.sid + " 佔用"); out.push(row); return; }
+        if (to.box === from.box && to.pos === from.pos) { row.status = "warn"; row.msgs.push("W20 原位置＝新位置（略過）"); row.skip = true; out.push(row); return; }
+        if (seen.has(a.key)) { row.status = "warn"; row.msgs.push("W21 檔內重複原位置（略過）"); row.skip = true; out.push(row); return; }
+        if (targetSeen.has(row.toCode)) { row.status = "err"; row.msgs.push("E26 多列指向同一新位置"); out.push(row); return; }
+        seen.add(a.key); targetSeen.add(row.toCode);
+        row.aliquot = a;
       }
       out.push(row);
     });
@@ -1029,7 +1170,10 @@
     </div>`;
     html += `<div class="scroll"><table class="tb"><thead><tr><th>列</th><th>SID</th><th>Study</th><th>位置／數量</th><th>結果</th></tr></thead><tbody>`;
     out.forEach(r => {
-      const pos = imp.type === "request" ? (r.qty || "") : (r.alloc || "");
+      const pos = imp.type === "request" ? (r.qty || "")
+        : imp.type === "mergeout" ? (r.fromCode || "")
+        : imp.type === "putback" ? [r.fromCode, r.toCode].filter(Boolean).join(" → ")
+        : (r.alloc || "");
       const cls = r.status === "err" ? "err" : r.status === "warn" ? "warn" : "ok";
       html += `<tr><td>${r.n}</td><td>${esc(r.sid)}</td><td>${esc(r.study)}</td><td>${esc(pos)}</td>
         <td><span class="tag ${cls}">${esc(r.msgs.join("；") || "OK")}</span></td></tr>`;
@@ -1043,11 +1187,77 @@
   function setAck(v) { imp.ack = v; validate(); }
 
   async function doImport() {
-    if (imp.type === "new" && St.role === "readonly") { alert("唯讀帳號不能新增檢體（需要 operator 以上）"); return; }
+    if (imp.running) return;
+    if (imp.type !== "request" && St.role === "readonly") { alert("唯讀帳號不能匯入（需要 operator 以上）"); return; }
     const rows = (imp.parsed || []).filter(r => r.status !== "err" && !r.skip);
     if (!rows.length) { alert("沒有可匯入的資料"); return; }
     if (imp.type === "new") { openImportConfirm(rows); return; }
+    if (imp.type === "mergeout") { await runImportMergeOut(rows); return; }
+    if (imp.type === "putback") { await runPutBack(rows); return; }
     await runImportRequest(rows);
+  }
+
+  /* 整併領出：建立需求清單（R 號），之後照一般流程選出領取 */
+  async function runImportMergeOut(rows) {
+    imp.running = true;
+    try {
+      const name = "整併領出 " + new Date().toISOString().slice(0, 16).replace("T", " ");
+      const l = await St.createList(name, "request");
+      const seen = new Set(), items = [];
+      rows.forEach(r => {
+        const a = r.aliquot;
+        if (!a || seen.has(a.key)) return;
+        seen.add(a.key);
+        items.push({ key: a.key, sid: a.sid, study: a.study, box: a.box, pos: a.pos, vol: a.vol == null ? "" : a.vol, qty: 1 });
+      });
+      await St.addItems(l.id, items);
+      currentListId = l.id;
+      alert(`已建立「${l.no}｜${name}」，共 ${items.length} 支\n請到清單工作台選出領取。`);
+      location.hash = "#lists";
+    } catch (e) {
+      alert("建立清單失敗：" + (e.message || e));
+    } finally {
+      imp.running = false;
+    }
+  }
+
+  /* 入庫（放回）：逐支呼叫 fn_put_back，保留原 id */
+  async function runPutBack(rows) {
+    if (!confirm(`將把 ${rows.length} 支放回新位置，會寫入「入庫」紀錄。\n只處理「已領出」的檢體，位置會被更新。\n\n確定要執行嗎？`)) return;
+    imp.running = true;
+    const op = window.CLOUD_EMAIL || (window.Cloud && window.Cloud.sessionEmail && window.Cloud.sessionEmail()) || "operator";
+    const total = rows.length;
+    let ok = 0;
+    const fail = [];
+    $("#preview").innerHTML = `<div class="card" style="margin-top:10px"><div class="muted" id="pbprog">0 / ${total}</div></div>`;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      try {
+        await St.putBack(r.aliquot, {
+          box: r.toCode.slice(0, 5), slot: r.toCode.slice(5),
+          operator: op, note: `整併入庫 ${r.fromCode}→${r.toCode}`,
+        });
+        ok++;
+      } catch (e) {
+        fail.push({ r, msg: e.message || String(e) });
+      }
+      const el = document.getElementById("pbprog");
+      if (el) el.textContent = `${i + 1} / ${total}（成功 ${ok}，失敗 ${fail.length}）`;
+    }
+    if (typeof St.reloadSnapshot === "function") {
+      try { await St.reloadSnapshot(); } catch (e) { /* 離線模式沒有 */ }
+    }
+    imp.running = false;
+    imp.canImport = false;
+    const failRows = fail.map(f => `<tr><td>${f.r.n}</td><td>${esc(f.r.sid)}</td><td>${esc(f.r.toCode || "")}</td><td><span class="tag err">${esc(f.msg)}</span></td></tr>`).join("");
+    $("#preview").innerHTML = `
+      <div class="row" style="margin:12px 0 8px">
+        <span class="tag ok">成功 ${ok}</span>
+        ${fail.length ? `<span class="tag err">失敗 ${fail.length}</span>` : ""}
+        <span style="flex:1"></span>
+        <button class="btn primary" onclick="location.reload()">重新載入</button>
+      </div>
+      ${fail.length ? `<div class="scroll"><table class="tb"><thead><tr><th>列</th><th>SID</th><th>新位置</th><th>原因</th></tr></thead><tbody>${failRows}</tbody></table></div>` : '<div class="muted">全部完成。</div>'}`;
   }
 
   async function runImportRequest(rows) {
@@ -1573,18 +1783,18 @@
     const outList = {
       name: "領出清單", title: `${title}｜領出清單`,
       subtitle: `共 ${moved.length} 管；一次全部領出放暫存盤`,
-      headers: ["#", "SID", "Study", "原盒", "原位置", "容量(mL)", "→ 新盒", "→ 新位置"],
-      widths: [6, 16, 16, 11, 9, 11, 11, 11],
-      rows: moved.map((a, i) => [i + 1, a.sid, a.study, a.fromBox, a.fromPos, a.vol == null ? "" : a.vol, a.toBox, a.toPos]),
+      headers: ["#", "SID", "Study", "原位置", "容量(mL)", "→ 新位置"],
+      widths: [6, 16, 16, 12, 11, 12],
+      rows: moved.map((a, i) => [i + 1, a.sid, a.study, a.fromBox + a.fromPos, a.vol == null ? "" : a.vol, a.toBox + a.toPos]),
     };
     const inList = {
       name: "入庫清單", title: `${title}｜入庫清單`,
-      subtitle: `共 ${moved.length} 管；照「新盒／新位置」放回`,
-      headers: ["#", "SID", "Study", "新盒", "新位置", "容量(mL)", "採檢日"],
-      widths: [6, 16, 16, 11, 9, 11, 14],
+      subtitle: `共 ${moved.length} 管；照「新位置」放回（用 SID＋原位置 對應已領出的檢體）`,
+      headers: ["#", "SID", "Study", "原位置", "新位置", "容量(mL)", "採檢日"],
+      widths: [6, 16, 16, 12, 12, 11, 14],
       rows: moved.slice()
         .sort((a, b) => a.toBox.localeCompare(b.toBox) || MG_POS.indexOf(a.toPos) - MG_POS.indexOf(b.toPos))
-        .map((a, i) => [i + 1, a.sid, a.study, a.toBox, a.toPos, a.vol == null ? "" : a.vol, a.date || ""]),
+        .map((a, i) => [i + 1, a.sid, a.study, a.fromBox + a.fromPos, a.toBox + a.toPos, a.vol == null ? "" : a.vol, a.date || ""]),
     };
     const finalRows = [];
     p.used.forEach(bx => {

@@ -288,6 +288,19 @@
     return { batch: res.batch_no, inserted: res.inserted, errors: res.detail || [] };
   }
 
+  /* 入庫（放回）：把已領出的同一支改回在庫並換位置（保留原 id） */
+  async function putBack(aliquot, opts = {}) {
+    const id = META.ids.get(aliquot.key) || aliquot.id || null;
+    if (!id) throw new Error("找不到檢體 id（請重新整理後再試）");
+    if (!opts.box || !opts.slot) throw new Error("缺少新位置");
+    await C.rpc("fn_put_back", {
+      p_aliquot_id: id, p_box: opts.box, p_slot: opts.slot,
+      p_operator: opts.operator || role, p_note: opts.note || "入庫",
+    });
+    META.status.delete(aliquot.key);
+    return { ok: true };
+  }
+
   /* ---------- 安裝 ---------- */
   function install() {
     role = window.CLOUD_ROLE || "operator";
@@ -303,7 +316,7 @@
       get lists() { return lists; },
       get movements() { return movements; },
       createList, getList, deleteList, addItems,
-      drawOut, markMissing, importRows,
+      drawOut, markMissing, importRows, putBack,
       listUsers: () => C.rpc("fn_list_users"),
       setUserRole: (id, role) => C.rpc("fn_set_user_role", { p_id: id, p_role: role }),
       updateUser: (id, patch) => C.rpc("fn_update_user", {
